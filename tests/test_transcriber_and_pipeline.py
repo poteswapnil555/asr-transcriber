@@ -246,3 +246,42 @@ def test_bad_audio_with_the_real_class_never_touches_the_model(tmp_path, monkeyp
     f.write_bytes(b"")
     r = transcribe_file(f, FasterWhisperTranscriber())
     assert r.status == "error" and calls["init"] is None  # no model was loaded or downloaded for a bad file
+
+
+# ---- loading is separate from (and not counted in) transcription -------------------------------------------
+from conftest import LoadingFake  # noqa: E402
+
+
+def test_pipeline_loads_the_model_before_transcribing_and_does_not_time_the_load(tone_wav):
+    t = LoadingFake(load_sleep=0.3)
+    r = transcribe_file(tone_wav, t)
+    assert t.events == ["load", "transcribe"] and r.status == "ok"
+    assert r.seconds_taken < 0.2  # the 0.3 s load is not counted as transcription time
+
+
+def test_pipeline_does_not_load_the_model_for_bad_or_silent_files(tmp_path, silent_wav):
+    t = LoadingFake()
+    empty = tmp_path / "empty.wav"
+    empty.write_bytes(b"")
+    assert transcribe_file(empty, t).status == "error" and transcribe_file(silent_wav, t).status == "no_speech"
+    assert t.loads == 0 and t.events == []
+
+
+def test_pipeline_reports_a_load_failure_as_an_error_result(tone_wav):
+    r = transcribe_file(tone_wav, LoadingFake(load_error=TranscriptionError("could not load the model 'base.en' (OSError: offline)")))
+    assert r.status == "error" and "could not load the model" in r.message and not r.model_called
+
+
+def test_pipeline_reports_an_unexpected_load_exception(tone_wav):
+    r = transcribe_file(tone_wav, LoadingFake(load_error=MemoryError("out of memory")))
+    assert r.status == "error" and "could not load the model (MemoryError" in r.message
+
+
+def test_real_class_load_is_done_once_and_transcribe_reuses_it(monkeypatch):
+    calls = install_fake(monkeypatch, segments=[FakeSegment(0, 1, "hi")])
+    t = FasterWhisperTranscriber("tiny.en")
+    t.load()
+    assert calls["init"][0] == "tiny.en" and calls["transcribe"] is None
+    first = calls["init"]
+    t.transcribe(np.zeros(16000, dtype=np.float32))
+    assert calls["init"] is first  # the model was not created again

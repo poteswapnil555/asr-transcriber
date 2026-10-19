@@ -189,3 +189,32 @@ def test_live_missing_audio_file_for_a_clip_is_a_failed_clip(tmp_path, monkeypat
     monkeypatch.setattr(ev, "FasterWhisperTranscriber", lambda model: FakeTranscriber())
     assert ev.main(["--live", "--clips", str(clips)]) == 0
     assert "file not found" in capsys.readouterr().err
+
+
+# ---- live mode: model loading is timed separately -------------------------------------------------------------
+from conftest import LoadingFake  # noqa: E402
+
+
+def test_live_reports_model_load_time_separately_and_excludes_it_from_the_real_time_factor(tmp_path, monkeypatch, capsys):
+    clips = make_clips(tmp_path, {"c1": "one two three", "c2": "four five six"})
+    fake = LoadingFake([Segment(0, 1, "one two three")], load_sleep=0.4)
+    monkeypatch.setattr(ev, "FasterWhisperTranscriber", lambda model: fake)
+    assert ev.main(["--live", "--clips", str(clips)]) == 0
+    out = capsys.readouterr().out
+    s = json.loads(out[out.index("{"):])
+    assert fake.loads >= 1 and fake.events[0] == "load"
+    assert s["model_load_seconds"] >= 0.4 and s["real_time_factor"] < 0.2  # load time is not in the speed number
+
+
+def test_live_model_that_cannot_be_loaded_stops_with_a_clear_message(tmp_path, monkeypatch, capsys):
+    clips = make_clips(tmp_path, {"c1": "one two three"})
+    fake = LoadingFake(load_error=TranscriptionError("could not load the model 'base.en' (OSError: offline). Hint: download it first."))
+    monkeypatch.setattr(ev, "FasterWhisperTranscriber", lambda model: fake)
+    assert ev.main(["--live", "--clips", str(clips)]) == 2
+    err = capsys.readouterr().err
+    assert "Cannot run evaluation" in err and "could not load the model" in err
+
+
+def test_mock_has_no_model_load_time(capsys):
+    assert ev.main(["--mock"]) == 0
+    assert "model_load_seconds" not in capsys.readouterr().out

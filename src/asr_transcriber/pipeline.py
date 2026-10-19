@@ -44,6 +44,15 @@ def transcribe_file(path: Path | str, transcriber: Transcriber) -> Result:
         return Result("no_speech", duration=audio.duration,
                       message=f"no speech detected: the audio is silent ({rms_dbfs(audio.samples):.0f} dBFS). The model was not run")
 
+    try:
+        load = getattr(transcriber, "load", None)
+        if load:
+            load()  # model loading/downloading is not part of the transcription time
+    except TranscriptionError as e:
+        return Result("error", duration=audio.duration, message=str(e))
+    except Exception as e:
+        return Result("error", duration=audio.duration, message=f"could not load the model ({type(e).__name__}: {str(e)[:120]})")
+
     start = time.perf_counter()
     try:
         segments = sanitise(transcriber.transcribe(audio.samples))

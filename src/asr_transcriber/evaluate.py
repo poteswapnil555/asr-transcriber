@@ -5,7 +5,9 @@
 
 Both sides are normalised before comparing (see wer.py). A clip that fails or yields no text counts as a clip whose
 every reference word was missed (all deletions), so failures lower the score instead of being hidden.
-Corpus WER = total errors / total reference words. Timing (real-time factor) is only reported for --live.
+Corpus WER = total errors / total reference words. Timing (real-time factor) is only reported for --live and
+counts transcription only: the model is loaded (and, on the first run, downloaded) before the clock starts and that
+time is reported separately as model_load_seconds.
 """
 from __future__ import annotations
 
@@ -13,13 +15,14 @@ import argparse
 import json
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import synthetic as syn
 from .config import ConfigError
 from .pipeline import Result, transcribe_file
-from .transcriber import FasterWhisperTranscriber
+from .transcriber import FasterWhisperTranscriber, TranscriptionError
 from .wer import Errors, corpus_errors, count_errors
 
 CLIPS_DIR = Path("data/clips")
@@ -139,6 +142,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--out", type=Path, help="save the summary plus per-clip details as JSON")
     args = ap.parse_args(argv)
 
+    load_seconds = None
     try:
         if args.mock:
             tmp = Path(tempfile.mkdtemp())
@@ -154,14 +158,20 @@ def main(argv: list[str]) -> int:
             clips, clips_dir, mode, timing, hook = load_manifest(args.clips), args.clips, "live", True, None
             transcriber = FasterWhisperTranscriber(args.model)
             print(f"MODE: live -- the real model '{transcriber.name}' on {len(clips)} clip(s) from {args.clips}.")
+            if hasattr(transcriber, "load"):
+                t0 = time.perf_counter()
+                transcriber.load()  # first run: downloads the model; timed separately from transcription
+                load_seconds = time.perf_counter() - t0
         if args.limit:
             clips = clips[: max(args.limit, 1)]
-    except (ValueError, ConfigError, OSError) as e:
+    except (ValueError, ConfigError, OSError, TranscriptionError) as e:
         print(f"Cannot run evaluation: {e}", file=sys.stderr)
         return 2
 
     report = evaluate(clips, clips_dir, transcriber, mode, timing, hook)
     summary = report.summary()
+    if load_seconds is not None:  # includes the one-time download on the first run
+        summary["model_load_seconds"] = round(load_seconds, 2)
     print(json.dumps(summary, indent=2))
     failed = [r for r in report.rows if r.status != "ok"]
     for r in failed:

@@ -54,6 +54,10 @@ class FasterWhisperTranscriber:
                 f"could not load the model '{self.name}' ({type(e).__name__}: {str(e)[:160]}). Hint: {hint}.") from None
         return self._model
 
+    def load(self) -> None:
+        """Load (and on the first run download) the model now, so loading is not counted as transcription time."""
+        self._load()
+
     def transcribe(self, samples: np.ndarray) -> list[Segment]:
         model = self._load()
         language = env("ASR_LANGUAGE") or ("en" if self.name.endswith(".en") else None)
