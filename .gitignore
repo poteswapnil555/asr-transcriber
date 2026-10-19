@@ -1,0 +1,18 @@
+.env
+*.env
+!.env.example
+.secrets/
+LocalDocs/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+data/private/
+# Third-party clips (LibriSpeech, CC BY 4.0): downloaded by scripts/download_clips.py, never committed
+data/clips/
+# Model files are downloaded on first use into the Hugging Face cache; never commit them
+models/
+*.bin
+*.onnx
+# Transcripts written by the CLI
+output/
