@@ -9,7 +9,7 @@ It refuses bad input with a clear message instead of crashing, and it includes a
   files created in `src/asr_transcriber/synthetic.py`, plus invented sentences. No real recording is in this repo.
 - **Public clips (not in this repo):** the first 10 clips of **LibriSpeech `test-clean`** with their reference transcripts, fetched by
   `scripts/download_clips.py` into `data/clips/` (git-ignored). The archive is **streamed and reading stops as soon as 10 clips are found**, so
-  only the start of the 346 MB archive should be downloaded.
+  only the start of the 346 MB archive is read. The 10 clips are about 1.5 MB on disk and the download took about 16 s; the number of bytes streamed was not measured. The clips are the first 10 with transcripts in archive order, so their numbers are not consecutive.
   - **Source:** <https://www.openslr.org/12/>. **Licence:** CC BY 4.0.
   - **Credit:** V. Panayotov, G. Chen, D. Povey, S. Khudanpur, *LibriSpeech: an ASR corpus based on public domain audio books*, ICASSP 2015.
   - LibriSpeech is clean, read audiobook speech. It says little about meetings, noise or accents.
@@ -78,7 +78,7 @@ whitespace collapsed. **Not normalised:** numbers vs spelled-out numbers, Britis
 so scores are stricter than, and not directly comparable with, published Whisper numbers. WER = (substitutions + deletions + insertions) / reference words,
 from a word-level edit distance (`src/asr_transcriber/wer.py`, tested against hand-checked cases). **Corpus WER pools all errors over all reference words**
 (it is not the mean of per-clip rates; both are reported). A clip that fails or returns no text counts as all of its reference words missed, so failures
-lower the score instead of disappearing. The real-time factor (processing time / audio length) is reported for `--live` only.
+lower the score instead of disappearing. The real-time factor (transcription time / audio length) is reported for `--live` only; the model is loaded (and on the first run downloaded) before the clock starts, and that time is reported separately as `model_load_seconds`.
 
 ## Output formats
 - **Text:** one line per segment.
@@ -102,22 +102,40 @@ Choose per use: default for safety against false speaker names, `--no-speaker` w
 - **A long recording is refused, not truncated** (default 30 minutes).
 
 ## Results
-Live results on the first 10 LibriSpeech `test-clean` clips (read audiobook speech, one chapter):
+**Live run:** the first 10 LibriSpeech `test-clean` clips in the order they appear in the archive (all from speaker 6930, chapter 75918; 206 reference
+words and 77.8 s of audio in total), run with `python -m asr_transcriber.evaluate --live`. faster-whisper 1.2.1 / CTranslate2 4.8.3, **CPU only, int8**, on an
+**11th Gen Intel Core i5-1135G7 @ 2.40 GHz (4 cores / 8 threads), 23.7 GB RAM, Windows 11**. Raw output: `docs/eval_base_en.json`, `docs/eval_tiny_en.json`.
+
+**These numbers describe clean, read audiobook speech on these 10 clips only.** LibriSpeech is the easy case for speech recognition: no background noise,
+one steady speaker, careful reading. Do not expect the same error rate on meetings, phone audio, accents, overlapping speakers or technical vocabulary.
 
 | Measure | `base.en` (default) | `tiny.en` |
 |---|---|---|
-| Corpus WER | not yet measured | not yet measured |
-| Mean per-clip WER | not yet measured | not yet measured |
-| Substitutions / deletions / insertions | not yet measured | not yet measured |
-| Clips that failed or returned no text | not yet measured | not yet measured |
-| Real-time factor on CPU | not yet measured | not yet measured |
+| Corpus WER (errors / 206 reference words) | **0.0291** (6 errors) | **0.0243** (5 errors) |
+| Mean per-clip WER | 0.0323 | 0.0366 |
+| Substitutions / deletions / insertions | 6 / 0 / 0 | 5 / 0 / 0 |
+| Clips that failed or returned no text | 0 of 10 | 0 of 10 |
+| Real-time factor on this CPU (transcription time / audio time, model loading excluded) | 0.099 (about 10x faster than real time) | 0.063 (about 16x faster than real time) |
+| Model load time | 1.3 s (model already on disk) | 15.7 s (includes the one-time download) |
+
+**How to read it.**
+- The two models are **not meaningfully different on accuracy here**: `tiny.en` made one error fewer than `base.en` (5 vs 6 of 206 words). With 10 clips from one chapter that gap is noise; it does not show that the smaller model is more accurate.
+- Every error is a single-word substitution; there were no deletions, insertions or failed clips. The errors, from the saved per-clip details (reference -> model output): `concord -> concorde` (both models; a proper noun), `before -> for` (both), `country's -> country` and `master's -> masters` (both; possessive apostrophes), `love -> loved` and `had -> has` (`base.en` only), `were -> we're` (`tiny.en` only; the strict normalisation counts a contraction as an error).
+- Speed is for this laptop CPU and these short clips (3-23 s). It is a measurement of one machine, not a promise.
+- An earlier run counted the one-time model download inside the first clip's time (28.8 s for a 3.5 s clip) and printed a wrong real-time factor of 0.454. The code was fixed so the model is loaded before the clock starts and the load time is reported separately; the numbers above are from the fixed code.
+- The WER here is the strict one described above (numbers, spelling and contractions are not normalised), so it is not directly comparable with published Whisper results.
+
+## Real output check
+The CLI was run once on a real clip (`base.en`, 23.3 s of audio, 5 segments, 0.06x real time): the text and WebVTT files were written, and the VTT is in the format above
+(`<v Speaker ?>` cues with `HH:MM:SS.mmm` times). My meeting-summarizer parser reads it without warnings and, as described above, merges the cues into one turn
+with the first cue's timestamp. This was checked by hand once; it is not an automated test.
 
 ## Limitations
-- **CPU speed:** transcription runs on CPU (int8). Speed depends heavily on the machine; it has not been measured yet, and a long recording can take a while.
+- **CPU speed:** transcription runs on CPU (int8). On the laptop CPU named under Results it ran about 10x (`base.en`) and 16x (`tiny.en`) faster than real time on short clips; that is one machine, and a slower CPU or a long recording will take longer. Only 10 short clips (3-23 s) were timed.
 - **No speaker labels:** Whisper gives text and timestamps only. There is no diarisation here.
 - **Accents, noise and domain words:** accuracy is likely to be worse than on LibriSpeech for accented, noisy, overlapping or technical speech. LibriSpeech is clean read speech, so its WER is a best case, not a prediction.
 - **Whisper can invent text on non-speech** (music, noise). Only silence is caught before the model; the VAD filter helps but is not a guarantee.
-- **The evaluation is tiny:** 10 clips from one chapter, so the WER has wide uncertainty and applies to those clips only.
+- **The evaluation is tiny:** 10 clips from one chapter and one speaker (206 words), so the WER has wide uncertainty and applies to those clips only. A difference of one word, like the one between `tiny.en` and `base.en`, means nothing.
 - **The normalisation is strict** (numbers, spelling and contractions count as errors), so numbers are not comparable with published ones.
 - **Resampling:** non-16 kHz WAV files use a plain linear resampler; give 16 kHz audio for best results. Other formats are resampled by PyAV.
 - **Whole file in memory:** the audio is decoded fully before transcribing (about 64 KB per second of audio as float32, more while decoding; roughly 115 MB for 30 minutes), which is why the 30-minute default limit exists.
@@ -125,7 +143,7 @@ Live results on the first 10 LibriSpeech `test-clean` clips (read audiobook spee
 - The Docker image has not been built or verified yet.
 
 ## Next steps
-- Run the live evaluation on both models, fill in the results table and look at per-clip errors in the saved JSON.
-- Measure real-time factor on the target machine and try `int8` vs `float32`.
+- Evaluate on more clips and speakers (including a noisy or accented set) so the two models can actually be compared.
+- Try `int8` vs `float32` and a larger model such as `small.en`, and measure speed and accuracy again.
 - Optional speaker separation (diarisation) as a separate, clearly labelled step.
 - Build and verify the Docker image.
