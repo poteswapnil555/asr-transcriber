@@ -140,10 +140,10 @@ with the first cue's timestamp. This was checked by hand once; it is not an auto
 - **Resampling:** non-16 kHz WAV files use a plain linear resampler; give 16 kHz audio for best results. Other formats are resampled by PyAV.
 - **Whole file in memory:** the audio is decoded fully before transcribing (about 64 KB per second of audio as float32, more while decoding; roughly 115 MB for 30 minutes), which is why the 30-minute default limit exists.
 - **English models only by default** (`base.en`, `tiny.en`); other models can be named with `--model` but have not been tried.
-- The Docker image has not been built or verified yet.
+- The Docker image builds and the mock evaluation runs inside it (`docker run --rm --entrypoint python asr-transcriber -m asr_transcriber.evaluate --mock`). This is a plumbing check with a fake model, not a live run and not an accuracy measurement.
 
 ## Next steps
 - Evaluate on more clips and speakers (including a noisy or accented set) so the two models can actually be compared.
 - Try `int8` vs `float32` and a larger model such as `small.en`, and measure speed and accuracy again.
 - Optional speaker separation (diarisation) as a separate, clearly labelled step.
-- Build and verify the Docker image.
+- Run the live evaluation inside Docker (pass variables with `--env-file`).
